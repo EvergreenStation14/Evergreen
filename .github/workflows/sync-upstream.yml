@@ -1,0 +1,84 @@
+name: Sync Upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sundays
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync_upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # Fetch full history for proper merging
+
+      - name: Configure Git
+        run: |
+          git config user.name "${{ vars.GIT_USER_NAME }}"
+          git config user.email "${{ vars.GIT_USER_EMAIL }}"
+
+      - name: Set current date as env variable
+        run: echo "NOW=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
+      - name: Add/update upstream remote
+        run: |
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/${{ vars.UPSTREAM_REPO }}.git
+          git fetch upstream
+
+      - name: Create branch from upstream
+        run: |
+          git checkout -b automated/upstream-merge-$NOW upstream/${{ vars.UPSTREAM_BRANCH }}
+
+      - name: Push branch to origin
+        run: |
+          git push origin automated/upstream-merge-$NOW
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "Upstream Sync - $NOW" \
+            --body "$(cat <<'EOF'
+          ## Automated Upstream Sync
+
+          This PR syncs the latest changes from **upstream/${{ vars.UPSTREAM_BRANCH }}** upstream.
+
+          **Remote:** https://github.com/${{ vars.UPSTREAM_REPO }}
+          **Date:** $NOW
+
+          ### Before Merging
+
+          - [ ] Review the changes carefully
+          - [ ] Check for any conflicts with fork-specific code
+          - [ ] Verify all CI tests pass
+          - [ ] Test in staging environment if available
+
+          ### Merge Instructions
+
+          You can merge this PR using your preferred strategy:
+          - **Merge commit**: Preserves full upstream history (recommended)
+          - **Rebase**: Creates a linear history (may require resolving conflicts)
+          - **Squash**: Not recommended for upstream syncs
+
+          ### Review Changes
+
+          Check the "Files changed" tab to see what's being synced from upstream.
+
+          ---
+          *This is an automated PR created by GitHub Actions*
+          *Branch: \`automated/upstream-merge-$NOW\`*
+          EOF
+          )" \
+            --base master \
+            --head automated/upstream-merge-$NOW
