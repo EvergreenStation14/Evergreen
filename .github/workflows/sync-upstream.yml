@@ -35,20 +35,40 @@ jobs:
           git remote add upstream https://github.com/${{ vars.UPSTREAM_REPO }}.git
           git fetch upstream
 
+      - name: Check for differences
+        id: check_diff
+        run: |
+          # Compare origin/master with upstream branch to check for new commits
+          BEHIND=$(git rev-list --count origin/master..upstream/${{ vars.UPSTREAM_BRANCH }})
+          echo "Commits behind upstream: $BEHIND"
+
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "Already up to date with upstream"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Found $BEHIND new commits from upstream"
+          fi
+
       - name: Create branch from upstream
+        if: steps.check_diff.outputs.has_changes == 'true'
         run: |
           git checkout -b automated/upstream-merge-$NOW upstream/${{ vars.UPSTREAM_BRANCH }}
 
       - name: Push branch to origin
+        if: steps.check_diff.outputs.has_changes == 'true'
         run: |
           git push origin automated/upstream-merge-$NOW
 
       - name: Create Pull Request
+        if: steps.check_diff.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           gh pr create \
             --title "Upstream Sync - $NOW" \
+            --base master \
+            --head automated/upstream-merge-$NOW \
             --body "$(cat <<'EOF'
           ## Automated Upstream Sync
 
